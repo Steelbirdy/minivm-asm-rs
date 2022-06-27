@@ -10,3 +10,5 @@ pub trait BuilderExt: BuildInstruction {
         self.integer(i64::from(ch), to)
     }
 }
+
+impl<T: BuildInstruction> BuilderExt for T {}
