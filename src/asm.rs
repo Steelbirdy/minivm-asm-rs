@@ -61,7 +61,7 @@ impl Label {
     pub fn new(name: &str) -> Label {
         let name_span = {
             let start = "func ".len();
-            //              func_   {name}
+            //        func_   {name}
             let end = start + name.len();
             start..end
         };
@@ -121,7 +121,7 @@ impl SubLabel {
     pub fn new(label: &str, name: &str) -> SubLabel {
         let name_span = {
             let start = 1;
-            //              @       {label}       .   {name}
+            //        @       {label}       .   {name}
             let end = start + label.len() + 1 + name.len();
             start..end
         };
