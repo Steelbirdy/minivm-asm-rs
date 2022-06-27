@@ -5,8 +5,8 @@ use crate::{
     Char,
 };
 
-pub trait BuilderExt<'id>: BuildInstruction<'id> {
-    fn char(&mut self, ch: Char, to: Reg<'id>) -> &mut Self {
+pub trait BuilderExt: BuildInstruction {
+    fn char(&mut self, ch: Char, to: Reg) -> &mut Self {
         self.integer(i64::from(ch), to)
     }
 }
