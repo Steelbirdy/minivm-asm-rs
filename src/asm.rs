@@ -3,8 +3,7 @@ use std::ops::{Deref, DerefMut, Range};
 
 const INDENTED_LINE_START: &str = "\n    ";
 const BLOCK_END: &str = "\nend";
-const ENTRY_POINT: &str =
-r"@__entry
+const ENTRY_POINT: &str = r"@__entry
     r0 <- call main
     exit";
 
@@ -15,11 +14,16 @@ pub struct Asm {
 }
 
 impl Asm {
+    #[must_use]
     pub fn new() -> Asm {
         let main = Label::new("main");
-        Self { main, buf: ENTRY_POINT.to_string() }
+        Self {
+            main,
+            buf: ENTRY_POINT.to_string(),
+        }
     }
 
+    #[must_use]
     pub fn main(&mut self) -> &mut Label {
         &mut self.main
     }
@@ -30,12 +34,19 @@ impl Asm {
         self.buf.push_str(&label);
     }
 
+    #[must_use]
     pub fn finish(self) -> String {
         let Asm { main, mut buf } = self;
         let main = main.finish();
         buf.push_str("\n\n");
         buf.push_str(&main);
         buf
+    }
+}
+
+impl Default for Asm {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -46,6 +57,7 @@ pub struct Label {
 }
 
 impl Label {
+    #[must_use]
     pub fn new(name: &str) -> Label {
         let name_span = {
             let start = "func ".len();
@@ -55,15 +67,21 @@ impl Label {
         };
         let buf = Self::format_name(name);
 
-        Self { inner: LabelImpl::new(buf, name_span), sub_labels: Vec::new() }
+        Self {
+            inner: LabelImpl::new(buf, name_span),
+            sub_labels: Vec::new(),
+        }
     }
 
     pub fn push_sub_label(&mut self, sub_label: SubLabel) {
         self.sub_labels.push(sub_label);
     }
 
+    #[must_use]
     pub fn finish(self) -> String {
-        let Label { inner, sub_labels, .. } = self;
+        let Label {
+            inner, sub_labels, ..
+        } = self;
         let mut buf = inner.finish();
         for sub_label in sub_labels {
             let asm = sub_label.finish();
@@ -99,6 +117,7 @@ pub struct SubLabel {
 }
 
 impl SubLabel {
+    #[must_use]
     pub fn new(label: &str, name: &str) -> SubLabel {
         let name_span = {
             let start = 1;
@@ -107,9 +126,12 @@ impl SubLabel {
             start..end
         };
         let buf = Self::format_name(label, name);
-        Self { inner: LabelImpl::new(buf, name_span) }
+        Self {
+            inner: LabelImpl::new(buf, name_span),
+        }
     }
 
+    #[must_use]
     pub fn finish(self) -> String {
         self.inner.finish()
     }
@@ -144,18 +166,19 @@ impl LabelImpl {
         Self { name_span, buf }
     }
 
+    #[must_use]
     pub fn name(&self) -> &str {
         let name_span = self.name_span.clone();
         &self.buf[name_span]
     }
 
-    pub fn push_raw(&mut self, raw: Cow<str>) {
-        self.buf.push_str(raw.as_ref());
+    pub fn push_raw<'a>(&mut self, raw: impl Into<Cow<'a, str>>) {
+        self.buf.push_str(raw.into().as_ref());
     }
 
-    pub fn push_line(&mut self, line: Cow<str>) {
+    pub fn push_line<'a>(&mut self, line: impl Into<Cow<'a, str>>) {
         self.buf.push_str(INDENTED_LINE_START);
-        self.buf.push_str(line.as_ref());
+        self.buf.push_str(line.into().as_ref());
     }
 
     fn finish(self) -> String {
@@ -167,16 +190,9 @@ impl LabelImpl {
 mod tests {
     use super::*;
 
-    impl Label {
+    impl LabelImpl {
         fn push_str(&mut self, s: &str) -> &mut Self {
-            self.push_line(s.into());
-            self
-        }
-    }
-
-    impl SubLabel {
-        fn push_str(&mut self, s: &str) -> &mut Self {
-            self.push_line(s.into());
+            self.push_line(s);
             self
         }
     }
@@ -195,7 +211,7 @@ mod tests {
 
         assert_eq!(
             sub_label.finish(),
-r"@fib.else
+            r"@fib.else
     r0 <- int 1
     r1 <- sub r1 r0
     r0 <- sub r1 r0
@@ -231,7 +247,7 @@ r"@fib.else
 
         assert_eq!(
             fib_label.finish(),
-r"func fib
+            r"func fib
     r0 <- int 2
     blt r1 r0 fib.else fib.then
 @fib.then
@@ -309,7 +325,7 @@ end"
 
         assert_eq!(
             asm.finish(),
-r"@__entry
+            r"@__entry
     r0 <- call main
     exit
 

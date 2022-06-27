@@ -1,7 +1,9 @@
-use std::borrow::Cow;
-use std::ops::{Deref, DerefMut};
+#![allow(clippy::module_name_repetitions)]
+
 use crate::{asm, Int};
 use generativity::Id;
+use std::borrow::Cow;
+use std::ops::{Deref, DerefMut};
 
 pub type Lbl<'id> = &'id str;
 pub type Reg<'id> = u8;
@@ -11,24 +13,23 @@ pub struct AsmBuilder<'id> {
     main: LabelBuilder<'id>,
     built_main: bool,
     unfinished: Option<LabelBuilder<'id>>,
-    id: Id<'id>,
+    __id: Id<'id>,
 }
 
 impl<'id> AsmBuilder<'id> {
+    #[must_use]
     pub fn new(id: Id<'id>) -> AsmBuilder<'id> {
         Self {
             asm: asm::Asm::new(),
             main: LabelBuilder::new("main", id),
             built_main: false,
             unfinished: None,
-            id,
+            __id: id,
         }
     }
 
     fn build_main_check(&mut self) {
-        if self.built_main {
-            panic!("cannot build `main` more than once")
-        }
+        assert!(!self.built_main, "cannot build `main` more than once");
         self.built_main = true;
     }
 
@@ -39,9 +40,10 @@ impl<'id> AsmBuilder<'id> {
     }
 
     /// Panics if `main` has already been built.
+    #[must_use]
     pub fn build_main<'a>(&'a mut self) -> LabelBuilderGuard<'a, 'id> {
         self.build_main_check();
-        LabelBuilderGuard::new(&mut self.main, self.id)
+        LabelBuilderGuard::new(&mut self.main, self.__id)
     }
 
     /// Panics if `main` has already been built.
@@ -54,11 +56,12 @@ impl<'id> AsmBuilder<'id> {
         self
     }
 
+    #[must_use]
     pub fn build_label<'a>(&'a mut self, name: &str) -> LabelBuilderGuard<'a, 'id> {
         self.take_unfinished();
-        let builder = LabelBuilder::new(name, self.id);
+        let builder = LabelBuilder::new(name, self.__id);
         let builder = self.unfinished.insert(builder);
-        LabelBuilderGuard::new(builder, self.id)
+        LabelBuilderGuard::new(builder, self.__id)
     }
 
     pub fn label<F>(&mut self, name: &str, f: F) -> &mut Self
@@ -66,12 +69,13 @@ impl<'id> AsmBuilder<'id> {
         F: for<'a> FnOnce(&'a mut LabelBuilder<'id>) -> &'a mut LabelBuilder<'id>,
     {
         self.take_unfinished();
-        let mut builder = LabelBuilder::new(name, self.id);
+        let mut builder = LabelBuilder::new(name, self.__id);
         f(&mut builder);
         self.asm.push_label(builder.finish());
         self
     }
 
+    #[must_use]
     pub fn finish(mut self) -> asm::Asm {
         self.take_unfinished();
         let AsmBuilder { mut asm, main, .. } = self;
@@ -83,15 +87,16 @@ impl<'id> AsmBuilder<'id> {
 pub struct LabelBuilder<'id> {
     lbl: asm::Label,
     unfinished: Option<SubLabelBuilder<'id>>,
-    id: Id<'id>,
+    __id: Id<'id>,
 }
 
 impl<'id> LabelBuilder<'id> {
+    #[must_use]
     pub fn new(name: &str, id: Id<'id>) -> LabelBuilder<'id> {
         Self {
             lbl: asm::Label::new(name),
             unfinished: None,
-            id,
+            __id: id,
         }
     }
 
@@ -101,11 +106,12 @@ impl<'id> LabelBuilder<'id> {
         }
     }
 
+    #[must_use]
     pub fn build_sub_label<'a>(&'a mut self, name: &str) -> SubLabelBuilderGuard<'a, 'id> {
         self.take_unfinished();
-        let builder = SubLabelBuilder::new(self.lbl.name(), name, self.id);
+        let builder = SubLabelBuilder::new(self.lbl.name(), name, self.__id);
         let builder = self.unfinished.insert(builder);
-        BuilderGuard::new(builder, self.id)
+        BuilderGuard::new(builder, self.__id)
     }
 
     pub fn sub_label<F>(&mut self, name: &str, f: F) -> &mut Self
@@ -113,30 +119,34 @@ impl<'id> LabelBuilder<'id> {
         F: for<'a> FnOnce(&'a mut SubLabelBuilder<'id>) -> &'a mut SubLabelBuilder<'id>,
     {
         self.take_unfinished();
-        let mut builder = SubLabelBuilder::new(self.lbl.name(), name, self.id);
+        let mut builder = SubLabelBuilder::new(self.lbl.name(), name, self.__id);
         f(&mut builder);
         self.lbl.push_sub_label(builder.finish());
         self
     }
 
+    #[must_use]
     pub fn finish(mut self) -> asm::Label {
         self.take_unfinished();
         self.lbl
     }
-    
+
     fn write_line<'a>(&mut self, line: impl Into<Cow<'a, str>>) {
-        self.lbl.push_line(line.into());
+        self.lbl.push_line(line);
     }
 }
 
 pub struct SubLabelBuilder<'id> {
     lbl: asm::SubLabel,
-    id: Id<'id>,
+    __id: Id<'id>,
 }
 
 impl<'id> SubLabelBuilder<'id> {
     fn new(label: &str, name: &str, id: Id<'id>) -> SubLabelBuilder<'id> {
-        Self { lbl: asm::SubLabel::new(label, name), id }
+        Self {
+            lbl: asm::SubLabel::new(label, name),
+            __id: id,
+        }
     }
 
     fn finish(self) -> asm::SubLabel {
@@ -144,14 +154,14 @@ impl<'id> SubLabelBuilder<'id> {
     }
 
     fn write_line<'a>(&mut self, line: impl Into<Cow<'a, str>>) {
-        self.lbl.push_line(line.into());
+        self.lbl.push_line(line);
     }
 }
 
 pub struct BuilderGuard<'a, 'id, T> {
     inner: &'a mut T,
     finished: drop_bomb::DropBomb,
-    id: Id<'id>,
+    __id: Id<'id>,
 }
 
 pub type LabelBuilderGuard<'a, 'id> = BuilderGuard<'a, 'id, LabelBuilder<'id>>;
@@ -160,7 +170,11 @@ pub type SubLabelBuilderGuard<'a, 'id> = BuilderGuard<'a, 'id, SubLabelBuilder<'
 impl<'a, 'id, T> BuilderGuard<'a, 'id, T> {
     fn new(inner: &'a mut T, id: Id<'id>) -> BuilderGuard<'a, 'id, T> {
         let bomb = drop_bomb::DropBomb::new("builder must be marked as finished using `.finish()`");
-        Self { inner, finished: bomb, id }
+        Self {
+            inner,
+            finished: bomb,
+            __id: id,
+        }
     }
 
     pub fn finish(mut self) {
@@ -200,15 +214,15 @@ pub trait BuildInstruction<'a> {
     /// Store the address of `label.a` in `rX`.
     fn label_address(&mut self, label: Lbl<'a>, to: Reg<'a>) -> &mut Self;
 
-    /// Jump to the address stored in `rX`. Usually this is obtained from [label_address](BuildInstruction::label_address).
+    /// Jump to the address stored in `rX`. Usually this is obtained from [`label_address`](BuildInstruction::label_address).
     fn dynamic_jump(&mut self, reg: Reg<'a>) -> &mut Self;
 
-    /// Jump to the address stored in `rX`. Usually this is obtained from [label_address](BuildInstruction::label_address).
+    /// Jump to the address stored in `rX`. Usually this is obtained from [`label_address`](BuildInstruction::label_address).
     /// Argument in `rA` is moved to `r1`, `rB` to `r2`, `rC` to `r3`, and so on.
     /// Once the function is done, all registers are restored. The return value is put into `rX`.
     fn dynamic_call(&mut self, reg: Reg<'a>, args: &[Reg<'a>], to: Reg<'a>) -> &mut Self;
 
-    /// Store the value stored in `rY` in the `rX` from [label_call](BuildInstruction::label_call) or [dynamic_call](BuildInstruction::dynamic_call).
+    /// Store the value stored in `rY` in the `rX` from [`label_call`](BuildInstruction::label_call) or [`dynamic_call`](BuildInstruction::dynamic_call).
     fn return_(&mut self, reg: Reg<'a>) -> &mut Self;
 
     /// Store `N` in `rX`.
@@ -233,13 +247,30 @@ pub trait BuildInstruction<'a> {
     fn mod_(&mut self, lhs: Reg<'a>, rhs: Reg<'a>, to: Reg<'a>) -> &mut Self;
 
     /// Jump to `label.a` if the contents of `rX` is zero, otherwise jump to `label.b`.
-    fn branch_boolean(&mut self, reg: Reg<'a>, label_true: Lbl<'a>, label_false: Lbl<'a>) -> &mut Self;
+    fn branch_boolean(
+        &mut self,
+        reg: Reg<'a>,
+        label_true: Lbl<'a>,
+        label_false: Lbl<'a>,
+    ) -> &mut Self;
 
     /// Jump to `label.t` if the contents of `rX` is equal to the contents of `rY`, otherwise jump to `label.f`.
-    fn branch_equal(&mut self, reg1: Reg<'a>, reg2: Reg<'a>, label_true: Lbl<'a>, label_false: Lbl<'a>) -> &mut Self;
+    fn branch_equal(
+        &mut self,
+        reg1: Reg<'a>,
+        reg2: Reg<'a>,
+        label_true: Lbl<'a>,
+        label_false: Lbl<'a>,
+    ) -> &mut Self;
 
     /// Jump to `label.t` if the contents of `rX` is less than the contents of `rY`, otherwise jump to `label.f`.
-    fn branch_less_than(&mut self, reg1: Reg<'a>, reg2: Reg<'a>, label_true: Lbl<'a>, label_false: Lbl<'a>) -> &mut Self;
+    fn branch_less_than(
+        &mut self,
+        reg1: Reg<'a>,
+        reg2: Reg<'a>,
+        label_true: Lbl<'a>,
+        label_false: Lbl<'a>,
+    ) -> &mut Self;
 
     /// Store an array with the ascii data representing `"text-1"` into `rX`.
     fn string(&mut self, text: &str, to: Reg<'a>) -> &mut Self;
@@ -282,7 +313,7 @@ macro_rules! impl_build_instruction {
                 self.write_line(format!("jump {label}"));
                 self
             }
-        
+
             fn label_call(&mut self, label: Lbl<$lt>, args: &[Reg<$lt>], to: Reg<$lt>) -> &mut Self {
                 let mut buf = format!("r{to} <- call {label}");
                 for arg in args {
@@ -293,17 +324,17 @@ macro_rules! impl_build_instruction {
                 self.write_line(buf);
                 self
             }
-        
+
             fn label_address(&mut self, label: Lbl<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- addr {label}"));
                 self
             }
-        
+
             fn dynamic_jump(&mut self, reg: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("djump r{reg}"));
                 self
             }
-        
+
             fn dynamic_call(&mut self, reg: Reg<$lt>, args: &[Reg<$lt>], to: Reg<$lt>) -> &mut Self {
                 let mut buf = format!("r{to} <- dcall r{reg}");
                 for arg in args {
@@ -314,92 +345,92 @@ macro_rules! impl_build_instruction {
                 self.write_line(buf);
                 self
             }
-        
+
             fn return_(&mut self, reg: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("ret r{reg}"));
                 self
             }
-        
+
             fn integer(&mut self, value: Int, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- int {value}"));
                 self
             }
-        
+
             fn neg(&mut self, from: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- neg r{from}"));
                 self
             }
-        
+
             fn add(&mut self, lhs: Reg<$lt>, rhs: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- add r{lhs} r{rhs}"));
                 self
             }
-        
+
             fn sub(&mut self, lhs: Reg<$lt>, rhs: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- sub r{lhs} r{rhs}"));
                 self
             }
-        
+
             fn mul(&mut self, lhs: Reg<$lt>, rhs: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- mul r{lhs} r{rhs}"));
                 self
             }
-        
+
             fn div(&mut self, lhs: Reg<$lt>, rhs: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- div r{lhs} r{rhs}"));
                 self
             }
-        
+
             fn mod_(&mut self, lhs: Reg<$lt>, rhs: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- mod r{lhs} r{rhs}"));
                 self
             }
-        
+
             fn branch_boolean(&mut self, reg: Reg<$lt>, label_true: Lbl<$lt>, label_false: Lbl<$lt>) -> &mut Self {
                 self.write_line(format!("bb r{reg} {label_false} {label_true}"));
                 self
             }
-            
+
             fn branch_equal(&mut self, reg1: Reg<$lt>, reg2: Reg<$lt>, label_true: Lbl<$lt>, label_false: Lbl<$lt>) -> &mut Self {
                 self.write_line(format!("beq r{reg1} r{reg2} {label_false} {label_true}"));
                 self
             }
-            
+
             fn branch_less_than(&mut self, reg1: Reg<$lt>, reg2: Reg<$lt>, label_true: Lbl<$lt>, label_false: Lbl<$lt>) -> &mut Self {
                 self.write_line(format!("blt r{reg1} r{reg2} {label_false} {label_true}"));
                 self
             }
-            
+
             fn string(&mut self, text: &str, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- str :{text}"));
                 self
             }
-        
+
             fn array(&mut self, len: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- arr r{len}"));
                 self
             }
-        
+
             fn set_array_index(&mut self, array: Reg<$lt>, index: Reg<$lt>, value: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("set r{array} r{index} r{value}"));
                 self
             }
-            
+
             fn get_array_index(&mut self, array: Reg<$lt>, index: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- get r{array} r{index}"));
                 self
             }
-            
+
             fn array_length(&mut self, array: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- len r{array}"));
                 self
             }
-            
+
             fn object_type(&mut self, object: Reg<$lt>, to: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("r{to} <- type r{object}"));
                 self
             }
-            
+
             fn put_char(&mut self, ch: Reg<$lt>) -> &mut Self {
                 self.write_line(format!("putchar r{ch}"));
                 self
@@ -435,9 +466,7 @@ mod tests {
             fib_builder
                 .integer(2, 0)
                 .branch_less_than(1, 0, "fib.then", "fib.else")
-                .sub_label("then", |fib_then_builder| {
-                    fib_then_builder.return_(1)
-                })
+                .sub_label("then", |fib_then_builder| fib_then_builder.return_(1))
                 .sub_label("else", |fib_else_builder| {
                     fib_else_builder
                         .integer(1, 0)
@@ -450,7 +479,7 @@ mod tests {
                 })
         });
 
-        let mut putn_label  = builder.build_label("putn");
+        let mut putn_label = builder.build_label("putn");
         putn_label
             .branch_boolean(1, "putn.digit", "putn.ret")
             .sub_label("digit", |putn_digit_builder| {
@@ -465,15 +494,13 @@ mod tests {
                     .put_char(1)
             })
             .sub_label("ret", |putn_ret_builder| {
-                putn_ret_builder
-                    .integer(0, 0)
-                    .return_(0)
+                putn_ret_builder.integer(0, 0).return_(0)
             });
         putn_label.finish();
 
         assert_eq!(
             builder.finish().finish(),
-r"@__entry
+            r"@__entry
     r0 <- call main
     exit
 
@@ -532,21 +559,20 @@ end",
         then_builder.return_(1);
         then_builder.finish();
 
-        builder
-            .sub_label("else", |else_builder| {
-                else_builder
-                    .integer(1, 0)
-                    .sub(1, 0, 1)
-                    .sub(1, 0, 0)
-                    .label_call("fib", &[1], 1)
-                    .label_call("fib", &[0], 0)
-                    .add(0, 1, 0)
-                    .return_(0)
-            });
+        builder.sub_label("else", |else_builder| {
+            else_builder
+                .integer(1, 0)
+                .sub(1, 0, 1)
+                .sub(1, 0, 0)
+                .label_call("fib", &[1], 1)
+                .label_call("fib", &[0], 0)
+                .add(0, 1, 0)
+                .return_(0)
+        });
 
         assert_eq!(
             builder.finish().finish(),
-r"func fib
+            r"func fib
     r0 <- int 2
     blt r1 r0 fib.else fib.then
 @fib.then
@@ -579,7 +605,7 @@ end",
 
         assert_eq!(
             builder.finish().finish(),
-r"@fib.else
+            r"@fib.else
     r0 <- int 1
     r1 <- sub r1 r0
     r0 <- sub r1 r0
@@ -598,8 +624,6 @@ r"@fib.else
         let mut label = LabelBuilder::new("test", guard.into());
         let mut sub_label = label.build_sub_label("0");
 
-        sub_label
-            .integer(0, 0)
-            .return_(0);
+        sub_label.integer(0, 0).return_(0);
     }
 }
