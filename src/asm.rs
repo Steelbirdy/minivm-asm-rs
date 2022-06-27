@@ -3,7 +3,43 @@ use std::ops::{Deref, DerefMut, Range};
 
 const INDENTED_LINE_START: &str = "\n    ";
 const BLOCK_END: &str = "\nend";
+const ENTRY_POINT: &str =
+r"@__entry
+    r0 <- call main
+    exit";
 
+#[derive(Clone)]
+pub struct Asm {
+    main: Label,
+    buf: String,
+}
+
+impl Asm {
+    pub fn new() -> Asm {
+        let main = Label::new("main");
+        Self { main, buf: ENTRY_POINT.to_string() }
+    }
+
+    pub fn main(&mut self) -> &mut Label {
+        &mut self.main
+    }
+
+    pub fn push_label(&mut self, label: Label) {
+        let label = label.finish();
+        self.buf.push_str("\n\n");
+        self.buf.push_str(&label);
+    }
+
+    pub fn finish(self) -> String {
+        let Asm { main, mut buf } = self;
+        let main = main.finish();
+        buf.push_str("\n\n");
+        buf.push_str(&main);
+        buf
+    }
+}
+
+#[derive(Clone)]
 pub struct Label {
     inner: LabelImpl,
     sub_labels: Vec<SubLabel>,
@@ -57,6 +93,7 @@ impl DerefMut for Label {
     }
 }
 
+#[derive(Clone)]
 pub struct SubLabel {
     inner: LabelImpl,
 }
@@ -96,6 +133,7 @@ impl DerefMut for SubLabel {
     }
 }
 
+#[derive(Clone)]
 pub struct LabelImpl {
     name_span: Range<usize>,
     buf: String,
@@ -109,6 +147,10 @@ impl LabelImpl {
     pub fn name(&self) -> &str {
         let name_span = self.name_span.clone();
         &self.buf[name_span]
+    }
+
+    pub fn push_raw(&mut self, raw: Cow<str>) {
+        self.buf.push_str(raw.as_ref());
     }
 
     pub fn push_line(&mut self, line: Cow<str>) {
@@ -203,6 +245,113 @@ r"func fib
     r0 <- add r0 r1
     ret r0
 end"
+        );
+    }
+
+    #[test]
+    fn test_asm_to_string() {
+        let mut asm = Asm::new();
+
+        asm.main()
+            .push_str("r0 <- int 35")
+            .push_str("r0 <- call fib r0")
+            .push_str("r0 <- call putn r0")
+            .push_str("r0 <- int 10")
+            .push_str("putchar r0")
+            .push_str("exit");
+
+        let mut fib_label = Label::new("fib");
+        fib_label
+            .push_str("r0 <- int 2")
+            .push_str("blt r1 r0 fib.else fib.then");
+
+        let mut fib_then_sub_label = SubLabel::new(fib_label.name(), "then");
+        fib_then_sub_label.push_str("ret r1");
+
+        let mut fib_else_sub_label = SubLabel::new(fib_label.name(), "else");
+        fib_else_sub_label
+            .push_str("r0 <- int 1")
+            .push_str("r1 <- sub r1 r0")
+            .push_str("r0 <- sub r1 r0")
+            .push_str("r1 <- call fib r1")
+            .push_str("r0 <- call fib r0")
+            .push_str("r0 <- add r0 r1")
+            .push_str("ret r0");
+
+        fib_label.push_sub_label(fib_then_sub_label);
+        fib_label.push_sub_label(fib_else_sub_label);
+
+        asm.push_label(fib_label);
+
+        let mut putn_label = Label::new("putn");
+        putn_label.push_str("bb r1 putn.ret putn.digit");
+
+        let mut putn_digit_sub_label = SubLabel::new("putn", "digit");
+        putn_digit_sub_label
+            .push_str("r0 <- int 10")
+            .push_str("r0 <- div r1 r0")
+            .push_str("r0 <- call putn r0")
+            .push_str("r0 <- int 10")
+            .push_str("r1 <- mod r1 r0")
+            .push_str("r0 <- int 48")
+            .push_str("r1 <- add r1 r0")
+            .push_str("putchar r1");
+
+        let mut putn_ret_sub_label = SubLabel::new("putn", "ret");
+        putn_ret_sub_label
+            .push_str("r0 <- int 0")
+            .push_str("ret r0");
+
+        putn_label.push_sub_label(putn_digit_sub_label);
+        putn_label.push_sub_label(putn_ret_sub_label);
+
+        asm.push_label(putn_label);
+
+        assert_eq!(
+            asm.finish(),
+r"@__entry
+    r0 <- call main
+    exit
+
+func fib
+    r0 <- int 2
+    blt r1 r0 fib.else fib.then
+@fib.then
+    ret r1
+@fib.else
+    r0 <- int 1
+    r1 <- sub r1 r0
+    r0 <- sub r1 r0
+    r1 <- call fib r1
+    r0 <- call fib r0
+    r0 <- add r0 r1
+    ret r0
+end
+
+func putn
+    bb r1 putn.ret putn.digit
+@putn.digit
+    r0 <- int 10
+    r0 <- div r1 r0
+    r0 <- call putn r0
+    r0 <- int 10
+    r1 <- mod r1 r0
+    r0 <- int 48
+    r1 <- add r1 r0
+    putchar r1
+@putn.ret
+    r0 <- int 0
+    ret r0
+end
+
+func main
+    r0 <- int 35
+    r0 <- call fib r0
+    r0 <- call putn r0
+    r0 <- int 10
+    putchar r0
+    exit
+end",
         );
     }
 }

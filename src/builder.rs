@@ -6,6 +6,80 @@ use generativity::Id;
 pub type Lbl<'id> = &'id str;
 pub type Reg<'id> = u8;
 
+pub struct AsmBuilder<'id> {
+    asm: asm::Asm,
+    main: LabelBuilder<'id>,
+    built_main: bool,
+    unfinished: Option<LabelBuilder<'id>>,
+    id: Id<'id>,
+}
+
+impl<'id> AsmBuilder<'id> {
+    pub fn new(id: Id<'id>) -> AsmBuilder<'id> {
+        Self {
+            asm: asm::Asm::new(),
+            main: LabelBuilder::new("main", id),
+            built_main: false,
+            unfinished: None,
+            id,
+        }
+    }
+
+    fn build_main_check(&mut self) {
+        if self.built_main {
+            panic!("cannot build `main` more than once")
+        }
+        self.built_main = true;
+    }
+
+    fn take_unfinished(&mut self) {
+        if let Some(prev_builder) = self.unfinished.take() {
+            self.asm.push_label(prev_builder.finish());
+        }
+    }
+
+    /// Panics if `main` has already been built.
+    pub fn build_main<'a>(&'a mut self) -> LabelBuilderGuard<'a, 'id> {
+        self.build_main_check();
+        LabelBuilderGuard::new(&mut self.main, self.id)
+    }
+
+    /// Panics if `main` has already been built.
+    pub fn main<F>(&mut self, f: F) -> &mut Self
+    where
+        F: for<'a> FnOnce(&'a mut LabelBuilder<'id>) -> &'a mut LabelBuilder<'id>,
+    {
+        self.build_main_check();
+        f(&mut self.main);
+        self
+    }
+
+    pub fn build_label<'a>(&'a mut self, name: &str) -> LabelBuilderGuard<'a, 'id> {
+        self.take_unfinished();
+        let builder = LabelBuilder::new(name, self.id);
+        let builder = self.unfinished.insert(builder);
+        LabelBuilderGuard::new(builder, self.id)
+    }
+
+    pub fn label<F>(&mut self, name: &str, f: F) -> &mut Self
+    where
+        F: for<'a> FnOnce(&'a mut LabelBuilder<'id>) -> &'a mut LabelBuilder<'id>,
+    {
+        self.take_unfinished();
+        let mut builder = LabelBuilder::new(name, self.id);
+        f(&mut builder);
+        self.asm.push_label(builder.finish());
+        self
+    }
+
+    pub fn finish(mut self) -> asm::Asm {
+        self.take_unfinished();
+        let AsmBuilder { mut asm, main, .. } = self;
+        *asm.main() = main.finish();
+        asm
+    }
+}
+
 pub struct LabelBuilder<'id> {
     lbl: asm::Label,
     unfinished: Option<SubLabelBuilder<'id>>,
@@ -27,11 +101,11 @@ impl<'id> LabelBuilder<'id> {
         }
     }
 
-    pub fn create_sub_label<'a>(&'a mut self, name: &str) -> SubLabelBuilderGuard<'a, 'id> {
+    pub fn build_sub_label<'a>(&'a mut self, name: &str) -> SubLabelBuilderGuard<'a, 'id> {
         self.take_unfinished();
         let builder = SubLabelBuilder::new(self.lbl.name(), name, self.id);
         let builder = self.unfinished.insert(builder);
-        SubLabelBuilderGuard::new(builder, self.id)
+        BuilderGuard::new(builder, self.id)
     }
 
     pub fn sub_label<F>(&mut self, name: &str, f: F) -> &mut Self
@@ -74,15 +148,18 @@ impl<'id> SubLabelBuilder<'id> {
     }
 }
 
-pub struct SubLabelBuilderGuard<'a, 'id> {
-    inner: &'a mut SubLabelBuilder<'id>,
+pub struct BuilderGuard<'a, 'id, T> {
+    inner: &'a mut T,
     finished: drop_bomb::DropBomb,
     id: Id<'id>,
 }
 
-impl<'a, 'id> SubLabelBuilderGuard<'a, 'id> {
-    fn new(inner: &'a mut SubLabelBuilder<'id>, id: Id<'id>) -> SubLabelBuilderGuard<'a, 'id> {
-        let bomb = drop_bomb::DropBomb::new("sub-label builder must be marked as finished using `SubLabelBuilder::finish`");
+pub type LabelBuilderGuard<'a, 'id> = BuilderGuard<'a, 'id, LabelBuilder<'id>>;
+pub type SubLabelBuilderGuard<'a, 'id> = BuilderGuard<'a, 'id, SubLabelBuilder<'id>>;
+
+impl<'a, 'id, T> BuilderGuard<'a, 'id, T> {
+    fn new(inner: &'a mut T, id: Id<'id>) -> BuilderGuard<'a, 'id, T> {
+        let bomb = drop_bomb::DropBomb::new("builder must be marked as finished using `.finish()`");
         Self { inner, finished: bomb, id }
     }
 
@@ -91,15 +168,15 @@ impl<'a, 'id> SubLabelBuilderGuard<'a, 'id> {
     }
 }
 
-impl<'a, 'id> Deref for SubLabelBuilderGuard<'a, 'id> {
-    type Target = SubLabelBuilder<'id>;
+impl<'a, 'id, T> Deref for BuilderGuard<'a, 'id, T> {
+    type Target = T;
 
     fn deref(&self) -> &Self::Target {
         self.inner
     }
 }
 
-impl<'a, 'id> DerefMut for SubLabelBuilderGuard<'a, 'id> {
+impl<'a, 'id, T> DerefMut for BuilderGuard<'a, 'id, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner
     }
@@ -332,36 +409,113 @@ macro_rules! impl_build_instruction {
     };
 }
 
-impl_build_instruction!['id: LabelBuilder<'id>, SubLabelBuilder<'id>, SubLabelBuilderGuard<'_, 'id>];
+impl_build_instruction!['id: LabelBuilder<'id>, SubLabelBuilder<'id>, LabelBuilderGuard<'_, 'id>, SubLabelBuilderGuard<'_, 'id>];
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_sub_label_builder_build() {
+    fn test_asm_builder_build() {
         generativity::make_guard!(guard);
 
-        let mut builder = SubLabelBuilder::new("fib", "else", guard.into());
-        builder
-            .integer(1, 0)
-            .sub(1, 0, 1)
-            .sub(1, 0, 0)
-            .label_call("fib", &[1], 1)
-            .label_call("fib", &[0], 0)
-            .add(0, 1, 0)
-            .return_(0);
+        let mut builder = AsmBuilder::new(guard.into());
+
+        builder.main(|main_builder| {
+            main_builder
+                .integer(35, 0)
+                .label_call("fib", &[0], 0)
+                .label_call("putn", &[0], 0)
+                .integer(10, 0)
+                .put_char(0)
+                .exit()
+        });
+
+        builder.label("fib", |fib_builder| {
+            fib_builder
+                .integer(2, 0)
+                .branch_less_than(1, 0, "fib.then", "fib.else")
+                .sub_label("then", |fib_then_builder| {
+                    fib_then_builder.return_(1)
+                })
+                .sub_label("else", |fib_else_builder| {
+                    fib_else_builder
+                        .integer(1, 0)
+                        .sub(1, 0, 1)
+                        .sub(1, 0, 0)
+                        .label_call("fib", &[1], 1)
+                        .label_call("fib", &[0], 0)
+                        .add(0, 1, 0)
+                        .return_(0)
+                })
+        });
+
+        let mut putn_label  = builder.build_label("putn");
+        putn_label
+            .branch_boolean(1, "putn.digit", "putn.ret")
+            .sub_label("digit", |putn_digit_builder| {
+                putn_digit_builder
+                    .integer(10, 0)
+                    .div(1, 0, 0)
+                    .label_call("putn", &[0], 0)
+                    .integer(10, 0)
+                    .mod_(1, 0, 1)
+                    .integer(48, 0)
+                    .add(1, 0, 1)
+                    .put_char(1)
+            })
+            .sub_label("ret", |putn_ret_builder| {
+                putn_ret_builder
+                    .integer(0, 0)
+                    .return_(0)
+            });
+        putn_label.finish();
 
         assert_eq!(
             builder.finish().finish(),
-r"@fib.else
+r"@__entry
+    r0 <- call main
+    exit
+
+func fib
+    r0 <- int 2
+    blt r1 r0 fib.else fib.then
+@fib.then
+    ret r1
+@fib.else
     r0 <- int 1
     r1 <- sub r1 r0
     r0 <- sub r1 r0
     r1 <- call fib r1
     r0 <- call fib r0
     r0 <- add r0 r1
-    ret r0"
+    ret r0
+end
+
+func putn
+    bb r1 putn.ret putn.digit
+@putn.digit
+    r0 <- int 10
+    r0 <- div r1 r0
+    r0 <- call putn r0
+    r0 <- int 10
+    r1 <- mod r1 r0
+    r0 <- int 48
+    r1 <- add r1 r0
+    putchar r1
+@putn.ret
+    r0 <- int 0
+    ret r0
+end
+
+func main
+    r0 <- int 35
+    r0 <- call fib r0
+    r0 <- call putn r0
+    r0 <- int 10
+    putchar r0
+    exit
+end",
         );
     }
 
@@ -374,7 +528,7 @@ r"@fib.else
             .integer(2, 0)
             .branch_less_than(1, 0, "fib.then", "fib.else");
 
-        let mut then_builder = builder.create_sub_label("then");
+        let mut then_builder = builder.build_sub_label("then");
         then_builder.return_(1);
         then_builder.finish();
 
@@ -410,24 +564,42 @@ end",
     }
 
     #[test]
+    fn test_sub_label_builder_build() {
+        generativity::make_guard!(guard);
+
+        let mut builder = SubLabelBuilder::new("fib", "else", guard.into());
+        builder
+            .integer(1, 0)
+            .sub(1, 0, 1)
+            .sub(1, 0, 0)
+            .label_call("fib", &[1], 1)
+            .label_call("fib", &[0], 0)
+            .add(0, 1, 0)
+            .return_(0);
+
+        assert_eq!(
+            builder.finish().finish(),
+r"@fib.else
+    r0 <- int 1
+    r1 <- sub r1 r0
+    r0 <- sub r1 r0
+    r1 <- call fib r1
+    r0 <- call fib r0
+    r0 <- add r0 r1
+    ret r0"
+        );
+    }
+
+    #[test]
     #[should_panic]
     fn test_sub_label_builder_panics_without_finish() {
         generativity::make_guard!(guard);
 
         let mut label = LabelBuilder::new("test", guard.into());
-        let mut sub_label = label.create_sub_label("0");
+        let mut sub_label = label.build_sub_label("0");
 
         sub_label
             .integer(0, 0)
             .return_(0);
-
-        // This should never be run
-        assert_eq!(
-            label.finish().finish(),
-r"func test
-@test.0
-    r0 <- int 0
-    ret r0",
-        );
     }
 }
