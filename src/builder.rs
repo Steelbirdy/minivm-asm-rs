@@ -297,7 +297,7 @@ macro_rules! impl_build_instruction {
             }
 
             fn register_move(&mut self, from: Reg, to: Reg) -> &mut Self {
-                self.write_line(format!("{to} <- reg r{from}"));
+                self.write_line(format!("r{to} <- reg r{from}"));
                 self
             }
 
